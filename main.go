@@ -59,13 +59,6 @@ func main() {
 	}
 	log.Println("Albums table created or already exists.")
 
-	// Clear any existing data in the albums table
-	_, err = db.Exec("TRUNCATE TABLE albums;")
-	if err != nil {
-		log.Fatalf("Error clearing table: %v", err)
-	}
-	log.Println("Albums table cleared.")
-
 	// Create a Gin router with default middleware (logger and recovery)
 	router := gin.Default()
 
@@ -73,6 +66,17 @@ func main() {
 	router.GET("/count", func(c *gin.Context) {
 		// Return 200 OK for load balancer health check
 		c.String(http.StatusOK, "OK")
+	})
+
+	// GET /reset endpoint to truncate the albums table
+	router.GET("/reset", func(c *gin.Context) {
+		// Truncate the albums table to remove all data
+		_, err := db.Exec("TRUNCATE TABLE albums;")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to truncate table"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"msg": "albums table truncated successfully"})
 	})
 
 	// POST /albums endpoint to upload image and profile data, and persist them into the database.
@@ -113,6 +117,20 @@ func main() {
 			return
 		}
 		imageSize := int64(len(imageData))
+
+		// Duplicate check: Query the database to see if an album with the same artist, title, and year exists.
+		var existingAlbumID string
+		duplicateQuery := `SELECT album_id FROM albums WHERE artist = ? AND title = ? AND year = ? LIMIT 1`
+		err = db.QueryRow(duplicateQuery, profile.Artist, profile.Title, profile.Year).Scan(&existingAlbumID)
+		if err != nil && err != sql.ErrNoRows {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to check duplicate album"})
+			return
+		}
+		// If an existing album is found, do not insert a new record.
+		if existingAlbumID != "" {
+			c.JSON(http.StatusOK, gin.H{"msg": "album already exists", "albumID": existingAlbumID})
+			return
+		}
 
 		// Generate a unique albumID.
 		albumID := uuid.New().String()
