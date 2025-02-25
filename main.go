@@ -1,11 +1,17 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"  // database
+	"encoding/json" // JSON
+	"io"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"         // Gin web framework
+	_ "github.com/go-sql-driver/mysql" // MySQL driver
+	"github.com/google/uuid"           // UUID generator
 )
 
 // Profile represents the album profile containing artist, title, and year.
@@ -15,16 +21,42 @@ type Profile struct {
 	Year   string `json:"year"`
 }
 
+var db *sql.DB // Global database connection
+
 func main() {
+	// Get the database DSN from environment variable DB_DSN
+	dsn := os.Getenv("DB_DSN")
+	if dsn == "" {
+		log.Fatal("DB_DSN environment variable is not set")
+	}
+
+	// Open a connection to the MySQL database
+	var err error
+	db, err = sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("Error opening DB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify the database connection
+	if err = db.Ping(); err != nil {
+		log.Fatalf("Error pinging DB: %v", err)
+	}
+
 	// Create a Gin router with default middleware (logger and recovery)
 	router := gin.Default()
 
-	// POST /albums endpoint to handle file upload and profile data
+	// Health check endpoint for ALB
+	router.GET("/count", func(c *gin.Context) {
+		// Return 200 OK for load balancer health check
+		c.String(http.StatusOK, "OK")
+	})
+
+	// POST /albums endpoint to upload image and profile data, and persist them into the database.
 	router.POST("/albums", func(c *gin.Context) {
 		// Retrieve the 'image' file from the multipart/form-data request.
-		file, err := c.FormFile("image")
+		fileHeader, err := c.FormFile("image")
 		if err != nil {
-			// Return HTTP 400 if the image part is missing (HTTP 400: Bad Request)
 			c.JSON(http.StatusBadRequest, gin.H{"msg": "invalid request: image is required"})
 			return
 		}
@@ -43,34 +75,69 @@ func main() {
 			return
 		}
 
-		// For this stub, return a fixed albumID and the image file size.
-		fixedAlbumID := "fixedAlbumId"
-		imageSize := strconv.FormatInt(file.Size, 10) // Convert file size (int64) to string
+		// Open the image file.
+		file, err := fileHeader.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to open image file"})
+			return
+		}
+		defer file.Close()
+
+		// Read the image file content.
+		imageData, err := io.ReadAll(file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to read image file"})
+			return
+		}
+		imageSize := int64(len(imageData))
+
+		// Generate a unique albumID.
+		albumID := uuid.New().String()
+
+		// Insert the new album record into the database.
+		query := `INSERT INTO albums (album_id, image_data, image_size, artist, title, year) VALUES (?, ?, ?, ?, ?, ?)`
+		_, err = db.Exec(query, albumID, imageData, imageSize, profile.Artist, profile.Title, profile.Year)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to persist album data"})
+			return
+		}
 
 		// Return JSON response with albumID and imageSize.
 		c.JSON(http.StatusOK, gin.H{
-			"albumID":   fixedAlbumID,
-			"imageSize": imageSize,
+			"albumID":   albumID,
+			"imageSize": strconv.FormatInt(imageSize, 10),
 		})
 	})
 
-	// GET /albums/:albumID endpoint to retrieve album information based on albumID.
+	// GET /albums/:albumID endpoint to retrieve album information from the database.
 	router.GET("/albums/:albumID", func(c *gin.Context) {
-		// Retrieve albumID from the URL path parameter.
 		albumID := c.Param("albumID")
 		if albumID == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"msg": "invalid request: albumID is required"})
 			return
 		}
 
-		// For this stub, always return constant album information.
+		// Query the album information from the database.
+		var artist, title, year string
+		query := `SELECT artist, title, year FROM albums WHERE album_id = ?`
+		err := db.QueryRow(query, albumID).Scan(&artist, &title, &year)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"msg": "album not found"})
+			return
+		} else if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to retrieve album data"})
+			return
+		}
+
+		// Return the album information.
 		c.JSON(http.StatusOK, gin.H{
-			"artist": "Sex Pistols",
-			"title":  "Never Mind The Bollocks!",
-			"year":   "1977",
+			"artist": artist,
+			"title":  title,
+			"year":   year,
 		})
 	})
 
-	// Start the server on port 8080.
-	router.Run(":8081")
+	// Start the server on port 8080
+	// Note: Port 8080 is used to match the ALB target group health check configuration.
+	router.Run(":8080")
 }
