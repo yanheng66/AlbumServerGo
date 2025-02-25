@@ -68,18 +68,23 @@ func main() {
 		c.String(http.StatusOK, "OK")
 	})
 
-	// GET /reset endpoint to truncate the albums table
-	router.GET("/reset", func(c *gin.Context) {
-		// Truncate the albums table to remove all data
-		_, err := db.Exec("TRUNCATE TABLE albums;")
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to truncate table"})
+	// GET /albums/valid endpoint to return any valid albumID from the database.
+	router.GET("/albums/valid", func(c *gin.Context) {
+		var albumID string
+		// Query any one album_id from the table.
+		query := `SELECT album_id FROM albums LIMIT 1`
+		err := db.QueryRow(query).Scan(&albumID)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"msg": "no album found"})
+			return
+		} else if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to retrieve album id"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"msg": "albums table truncated successfully"})
+		c.JSON(http.StatusOK, gin.H{"albumID": albumID})
 	})
 
-	// POST /albums endpoint to upload image and profile data, and persist them into the database.
+	// POST /albums endpoint to upload image and profile data, and insert them into the database.
 	router.POST("/albums", func(c *gin.Context) {
 		// Retrieve the 'image' file from the multipart/form-data request.
 		fileHeader, err := c.FormFile("image")
@@ -118,24 +123,10 @@ func main() {
 		}
 		imageSize := int64(len(imageData))
 
-		// Duplicate check: Query the database to see if an album with the same artist, title, and year exists.
-		var existingAlbumID string
-		duplicateQuery := `SELECT album_id FROM albums WHERE artist = ? AND title = ? AND year = ? LIMIT 1`
-		err = db.QueryRow(duplicateQuery, profile.Artist, profile.Title, profile.Year).Scan(&existingAlbumID)
-		if err != nil && err != sql.ErrNoRows {
-			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to check duplicate album"})
-			return
-		}
-		// If an existing album is found, do not insert a new record.
-		if existingAlbumID != "" {
-			c.JSON(http.StatusOK, gin.H{"msg": "album already exists", "albumID": existingAlbumID})
-			return
-		}
-
 		// Generate a unique albumID.
 		albumID := uuid.New().String()
 
-		// Insert the new album record into the database.
+		// Insert the new album record into the database without duplicate check.
 		query := `INSERT INTO albums (album_id, image_data, image_size, artist, title, year) VALUES (?, ?, ?, ?, ?, ?)`
 		_, err = db.Exec(query, albumID, imageData, imageSize, profile.Artist, profile.Title, profile.Year)
 		if err != nil {
