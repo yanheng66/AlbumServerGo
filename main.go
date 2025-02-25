@@ -43,6 +43,29 @@ func main() {
 		log.Fatalf("Error pinging DB: %v", err)
 	}
 
+	// Create the albums table if it does not exist
+	createTableQuery := `CREATE TABLE IF NOT EXISTS albums (
+		album_id VARCHAR(255) PRIMARY KEY,
+		image_data LONGBLOB,
+		image_size INT NOT NULL,
+		artist VARCHAR(255) NOT NULL,
+		title VARCHAR(255) NOT NULL,
+		year VARCHAR(4) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);`
+	_, err = db.Exec(createTableQuery)
+	if err != nil {
+		log.Fatalf("Error creating table: %v", err)
+	}
+	log.Println("Albums table created or already exists.")
+
+	// Clear any existing data in the albums table
+	_, err = db.Exec("TRUNCATE TABLE albums;")
+	if err != nil {
+		log.Fatalf("Error clearing table: %v", err)
+	}
+	log.Println("Albums table cleared.")
+
 	// Create a Gin router with default middleware (logger and recovery)
 	router := gin.Default()
 
