@@ -68,6 +68,17 @@ func main() {
 		c.String(http.StatusOK, "OK")
 	})
 
+	// GET /reset endpoint to truncate the albums table
+	router.GET("/reset", func(c *gin.Context) {
+		// Truncate the albums table to remove all data
+		_, err := db.Exec("TRUNCATE TABLE albums;")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"msg": "failed to truncate table"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"msg": "albums table truncated successfully"})
+	})
+
 	// GET /albums/valid endpoint to return any valid albumID from the database.
 	router.GET("/albums/valid", func(c *gin.Context) {
 		var albumID string
