@@ -1,17 +1,18 @@
 package main
 
 import (
-	"database/sql"  // database
-	"encoding/json" // JSON
+	"database/sql"                     // database
+	"encoding/json"                    // JSON
+	"github.com/gin-gonic/gin"         // Gin web framework
+	_ "github.com/go-sql-driver/mysql" // MySQL driver
+	"github.com/google/uuid"           // UUID generator
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
-
-	"github.com/gin-gonic/gin"         // Gin web framework
-	_ "github.com/go-sql-driver/mysql" // MySQL driver
-	"github.com/google/uuid"           // UUID generator
+	"time"
 )
 
 // Profile represents the album profile containing artist, title, and year.
@@ -24,6 +25,12 @@ type Profile struct {
 var db *sql.DB // Global database connection
 
 func main() {
+	// Use all available CPU cores.
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	// Set Gin to release mode for better performance
+	gin.SetMode(gin.ReleaseMode)
+
 	// Get the database DSN from environment variable DB_DSN
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
@@ -37,6 +44,10 @@ func main() {
 		log.Fatalf("Error opening DB: %v", err)
 	}
 	defer db.Close()
+
+	db.SetMaxOpenConns(200)
+	db.SetMaxIdleConns(50)
+	db.SetConnMaxLifetime(10 * time.Minute)
 
 	// Verify the database connection
 	if err = db.Ping(); err != nil {
