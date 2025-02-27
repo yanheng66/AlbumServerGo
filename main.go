@@ -26,7 +26,7 @@ var db *sql.DB // Global database connection
 
 func main() {
 	// Use all available CPU cores.
-	runtime.GOMAXPROCS(runtime.NumCPU())
+	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 
 	// Set Gin to release mode for better performance
 	gin.SetMode(gin.ReleaseMode)
